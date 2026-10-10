@@ -1,85 +1,138 @@
 const startButton = document.querySelector('#start');
-const stopButton = document.querySelector('#stop');
+const endButton = document.querySelector('#end');
 const status = document.querySelector('#status');
 
 async function init() {
-  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-    throw new Error('Камера доступна только через HTTPS или localhost.');
+  if (!window.isSecureContext) throw new Error('Откройте страницу через HTTPS или localhost.');
+  if (!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-ar'))) {
+    throw new Error('Immersive AR недоступен. Используйте устройство с поддержкой WebXR (Chrome на Android) или WebXR-эмулятор.');
   }
   const THREE = await import('three');
-  const { MindARThree } = await import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-three.prod.js');
-  const mindar = new MindARThree({
-    container: document.querySelector('#container'),
-    uiLoading: 'no', uiScanning: 'no', uiError: 'no',
-    // Встроенный OneEuroFilter сглаживает точки лица, матрицу и масштаб.
-    filterMinCF: 0.001,
-    filterBeta: 1,
-  });
-  const { scene, renderer, camera } = mindar;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x555555, 2));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.xr.enabled = true;
+  renderer.xr.setReferenceSpaceType('local-floor');
+  document.body.appendChild(renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x606060, 3));
 
-  // Точка 168 — переносица. MindAR обновляет положение, поворот и масштаб
-  // группы относительно лица. Единица масштаба соответствует ширине лица.
-  const anchor = mindar.addAnchor(168);
-  anchor.group.visible = false;
-  const glasses = new THREE.Group();
-  glasses.scale.setScalar(1);
-  glasses.position.set(0, -0.015, 0.055);
-  anchor.group.add(glasses);
-  const material = new THREE.MeshStandardMaterial({ color: 0x202020, roughness: 0.45 });
+  const reticle = new THREE.Mesh(
+    new THREE.RingGeometry(0.09, 0.12, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x00ff88, side: THREE.DoubleSide }),
+  );
+  reticle.matrixAutoUpdate = false;
+  reticle.visible = false;
+  scene.add(reticle);
 
-  // Лёгкая симметричная 3D-модель: две оправы, перемычка и дужки.
-  for (const side of [-1, 1]) {
-    const points = [];
-    for (let i = 0; i < 32; i++) {
-      const angle = i / 32 * Math.PI * 2;
-      points.push(new THREE.Vector3(side * 0.225 + Math.cos(angle) * 0.19, Math.sin(angle) * 0.13, 0));
+  // Куб 20 см. Геометрия поднята на половину высоты, чтобы низ лежал на плоскости.
+  const cube = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2, 0.2, 0.2).translate(0, 0.1, 0),
+    new THREE.MeshStandardMaterial({ color: 0x2288ff, roughness: 0.6 }),
+  );
+  cube.matrixAutoUpdate = false;
+  cube.visible = false;
+  // Объект — ребёнок сцены, поэтому не перемещается вместе с камерой.
+  scene.add(cube);
+
+  let session = null;
+  let hitTestSource = null; // XRHitTestSource для луча из центра камеры.
+  let placed = false;
+  const hitMatrix = new THREE.Matrix4();
+  const normal = new THREE.Vector3();
+
+  function updateReticle(frame) {
+    reticle.visible = false;
+    if (!frame || !hitTestSource || placed) return;
+    const referenceSpace = renderer.xr.getReferenceSpace();
+    if (!referenceSpace) return;
+    const hits = frame.getHitTestResults(hitTestSource);
+    for (const hit of hits) {
+      const pose = hit.getPose(referenceSpace);
+      if (!pose) continue;
+      hitMatrix.fromArray(pose.transform.matrix);
+      // Локальная ось Y результата — нормаль поверхности. Выбираем горизонтальную.
+      normal.setFromMatrixColumn(hitMatrix, 1).normalize();
+      if (normal.y < 0.9) continue;
+      reticle.matrix.copy(hitMatrix);
+      reticle.visible = true;
+      break;
     }
-    const curve = new THREE.CatmullRomCurve3(points, true);
-    glasses.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.018, 6, true), material));
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.025, 0.32), material);
-    arm.position.set(side * 0.415, 0, -0.16);
-    glasses.add(arm);
   }
-  const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.025, 0.025), material);
-  glasses.add(bridge);
 
-  let running = false;
-  function stop() {
-    renderer.setAnimationLoop(null);
-    mindar.controller.stopProcessVideo();
-    mindar.video?.srcObject?.getTracks().forEach(track => track.stop());
-    mindar.video?.remove();
-    anchor.group.visible = false;
-    running = false;
-    startButton.disabled = false;
-    stopButton.disabled = true;
-    status.textContent = 'Камера остановлена.';
+  function onSelect(event) {
+    if (placed) return;
+    // Используем свежий результат в кадре тапа, без устаревшего маркера.
+    updateReticle(event.frame);
+    if (!reticle.visible) return;
+    cube.matrix.copy(reticle.matrix);
+    cube.visible = true;
+    placed = true;
+    reticle.visible = false;
+    // Матрица куба после размещения больше не обновляется результатами hit-test.
+    status.textContent = 'Куб размещён. Перемещайте камеру — куб остаётся на месте.';
   }
+
+  function cleanup() {
+    hitTestSource?.cancel();
+    hitTestSource = null;
+    session = null;
+    placed = false;
+    cube.visible = false;
+    reticle.visible = false;
+    startButton.disabled = false;
+    startButton.hidden = false;
+    endButton.hidden = true;
+    status.textContent = 'AR-сессия завершена.';
+  }
+
+  // Клики по кнопкам DOM overlay не должны размещать куб.
+  document.querySelector('#controls').addEventListener('beforexrselect', event => event.preventDefault());
   startButton.addEventListener('click', async () => {
     startButton.disabled = true;
-    status.textContent = 'Запуск камеры и распознавания лица…';
+    status.textContent = 'Запуск AR…';
     try {
-      await mindar.start();
-      running = true;
-      stopButton.disabled = false;
-      renderer.setAnimationLoop(() => {
-        // MindAR скрывает anchor.group, когда лицо не обнаружено.
-        status.textContent = mindar.getLatestEstimate()
-          ? 'Лицо обнаружено. Поворачивайте голову — очки следуют за лицом.'
-          : 'Посмотрите в камеру. Ожидание лица…';
-        renderer.render(scene, camera);
+      session = await navigator.xr.requestSession('immersive-ar', {
+        requiredFeatures: ['hit-test', 'local-floor'],
+        optionalFeatures: ['dom-overlay'],
+        domOverlay: { root: document.querySelector('#overlay') },
       });
+      session.addEventListener('end', cleanup, { once: true });
+      session.addEventListener('select', onSelect);
+      await renderer.xr.setSession(session);
+      const viewerSpace = await session.requestReferenceSpace('viewer');
+      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+      startButton.hidden = true;
+      endButton.hidden = false;
+      status.textContent = 'Медленно наведите камеру на пол или стол. Когда появится кольцо, коснитесь экрана.';
     } catch (error) {
-      stop();
-      status.textContent = `Не удалось запустить камеру. Разрешите доступ и проверьте интернет. ${error?.message || ''}`;
+      if (session) {
+        try { await session.end(); } catch { cleanup(); }
+      } else cleanup();
+      status.textContent = `Не удалось запустить AR: ${error.message}`;
     }
   });
-  stopButton.addEventListener('click', stop);
-  window.addEventListener('pagehide', () => { if (running) stop(); });
+  endButton.addEventListener('click', async () => {
+    try { await session?.end(); }
+    catch (error) { status.textContent = `Ошибка завершения AR: ${error.message}`; }
+  });
+  renderer.setAnimationLoop((time, frame) => {
+    if (frame && !placed) {
+      updateReticle(frame);
+      status.textContent = reticle.visible
+        ? 'Плоскость найдена. Коснитесь экрана, чтобы разместить куб.'
+        : 'Медленно наведите камеру на пол или стол. Ожидание плоскости…';
+    }
+    renderer.render(scene, camera);
+  });
+  window.addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    if (!renderer.xr.isPresenting) renderer.setSize(innerWidth, innerHeight);
+  });
   startButton.disabled = false;
-  status.textContent = 'Нажмите «Включить камеру» и разрешите доступ.';
+  status.textContent = 'Нажмите «Запустить AR». После появления кольца коснитесь экрана.';
 }
 
-init().catch(error => { status.textContent = `Ошибка: ${error.message}`; });
+init().catch(error => { status.textContent = error.message; });
