@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Задание 4 — WebXR hit-test</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; }
+    canvas { position: fixed; inset: 0; }
+    #overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+    #controls { padding: 8px; background: white; color: black; pointer-events: auto; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    p { margin: 8px 0 0; }
+  </style>
+  <script type="importmap">
+    {"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js"}}
+  </script>
+</head>
+<body>
+  <div id="overlay">
+    <div id="controls">
+      <h1>Задание 4. Стул на плоскости</h1>
+      <button id="start" disabled>Запустить AR</button>
+      <button id="end" hidden>Завершить AR</button>
+      <p id="status" role="status">Проверка поддержки WebXR…</p>
+    </div>
+  </div>
+  <script type="module" src="./app4.js"></script>
+</body>
+</html>
