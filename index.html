@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Задание 3 — MindAR Face Tracking</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #202020; color: white; }
+    #container { position: fixed; inset: 0; overflow: hidden; }
+    #controls { position: fixed; top: 12px; left: 12px; right: 12px; z-index: 10; padding: 12px; background: #000b; border-radius: 8px; }
+    h1 { font-size: 18px; margin: 0 0 10px; }
+    p { margin: 10px 0 0; }
+    button { padding: 10px 16px; }
+  </style>
+  <script type="importmap">
+    {"imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
+    }}
+  </script>
+</head>
+<body>
+  <div id="container"></div>
+  <div id="controls">
+    <h1>Задание 3. 3D-очки на лице</h1>
+    <button id="start" disabled>Включить камеру</button>
+    <button id="stop" disabled>Остановить</button>
+    <p id="status" role="status">Загрузка библиотек…</p>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
